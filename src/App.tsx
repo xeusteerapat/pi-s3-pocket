@@ -19,6 +19,7 @@ import {
 
 type SortKey = 'name' | 'size' | 'lastModified';
 type Entry = (Folder & { kind: 'folder' }) | (S3Object & { kind: 'object' });
+type RequestLog = { method: string; url: string; status: number; time: string }; 
 
 const formatSize = (bytes: number) => {
 	if (!bytes) return '0 B';
@@ -57,6 +58,7 @@ function uploadFiles(
 			event.lengthComputable &&
 			onProgress(Math.round((event.loaded / event.total) * 100));
 		xhr.onload = () => {
+			window.dispatchEvent(new CustomEvent('s3-api-request', { detail: { method: 'PUT', url: `${bucketPath(bucket)}/objects`, status: xhr.status, time: new Date().toISOString() } }));
 			if (xhr.status >= 200 && xhr.status < 300) resolve();
 			else {
 				try {
@@ -74,8 +76,10 @@ function uploadFiles(
 				}
 			}
 		};
-		xhr.onerror = () =>
+		xhr.onerror = () => {
+			window.dispatchEvent(new CustomEvent('s3-api-request', { detail: { method: 'PUT', url: `${bucketPath(bucket)}/objects`, status: 0, time: new Date().toISOString() } }));
 			reject(new ApiError('Unable to reach the upload API', 'NetworkError', 0));
+		};
 		xhr.send(form);
 	});
 }
@@ -132,6 +136,7 @@ export default function App() {
 	const [ascending, setAscending] = useState(true);
 	const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 	const [dragging, setDragging] = useState(false);
+	const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
 	const [preview, setPreview] = useState<{
 		object: S3Object;
 		url?: string;
@@ -139,6 +144,15 @@ export default function App() {
 		error?: string;
 	} | null>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		const capture = (event: Event) => {
+			const log = (event as CustomEvent<RequestLog>).detail;
+			setRequestLogs((current) => [log, ...current].slice(0, 8));
+		};
+		window.addEventListener('s3-api-request', capture);
+		return () => window.removeEventListener('s3-api-request', capture);
+	}, []);
 
 	const checkHealth = useCallback(async () => {
 		try {
@@ -428,24 +442,26 @@ export default function App() {
 	}
 
 	const crumbs = prefix.split('/').filter(Boolean);
+	const loadedSize = page.objects.reduce((total, object) => total + object.size, 0);
+	const currentBucket = buckets.find((item) => item.name === bucket);
 	return (
 		<div className='app'>
 			<header className='topbar'>
-				<div>
-					<h1>Local S3</h1>
-					<span className='subtitle'>Developer object browser</span>
+				<div className='brand'>
+					<span className='brand-mark'>♧</span>
+					<span><h1>s3-local-console</h1><small>local development file manager</small></span>
 				</div>
-				<div className={`status ${health.connected ? 'online' : 'offline'}`}>
-					<span className='dot' /> Floci{' '}
-					{health.connected ? 'Connected' : 'Offline'}
-					<small>{health.endpoint}</small>
+				<div className='header-controls'>
+					<div className='endpoint-pill'>⌁ <b>Floci</b><span>{health.endpoint}</span></div>
+					<div className={`status ${health.connected ? 'online' : 'offline'}`}><span className='dot' />{health.connected ? 'connected' : 'offline'}</div>
+					<button className='credentials' onClick={() => window.alert('S3 credentials are configured securely on the server through environment variables.')}>⌘ Local credentials</button>
 				</div>
 			</header>
 
 			<aside className='sidebar'>
 				<div className='sidebar-title'>
 					<strong>Buckets</strong>
-					<button onClick={createBucket}>＋ New</button>
+					<button onClick={() => void loadBuckets()} title='Refresh buckets'>↻</button>
 				</div>
 				<div className='bucket-list'>
 					{buckets.map((item) => (
@@ -476,7 +492,18 @@ export default function App() {
 						</div>
 					))}
 					{!buckets.length && <p className='empty-side'>No buckets</p>}
+					<button className='create-bucket' onClick={createBucket}>＋ Create bucket</button>
 				</div>
+				<section className='request-log'>
+					<h3>Request log</h3>
+					{requestLogs.length ? requestLogs.map((log, index) => (
+						<div className='log-entry' key={`${log.time}-${index}`}>
+							<span>{new Date(log.time).toLocaleTimeString([], { hour12: false })}</span>{' '}
+							<b className={log.status >= 400 || !log.status ? 'log-error' : ''}>{log.method} {log.status || 'ERR'}</b>
+							<small>{log.url.replace('/api/buckets/', 's3://').replace('/api/', '/')}</small>
+						</div>
+					)) : <p>No requests yet</p>}
+				</section>
 			</aside>
 
 			<main
@@ -510,6 +537,21 @@ export default function App() {
 					</div>
 				) : (
 					<>
+						<section className='bucket-overview'>
+							<div className='bucket-heading'>
+								<div><h2>s3://{bucket}</h2><p>region us-east-1 {currentBucket?.creationDate && <>· created {formatDate(currentBucket.creationDate)}</>}</p></div>
+								<div className='overview-actions'>
+									<button className='primary' onClick={() => inputRef.current?.click()}>↥ Upload</button>
+									<button onClick={createFolder}>▱ New folder</button>
+									<button className='delete-overview' onClick={() => void deleteBucket(bucket)}>Delete bucket</button>
+								</div>
+							</div>
+							<div className='bucket-stats'>
+								<div><span>▧</span><b>{page.objects.length}</b><small>Loaded objects</small></div>
+								<div><span>▤</span><b>{formatSize(loadedSize)}</b><small>Loaded size</small></div>
+								<div><span>⌑</span><b>local</b><small>Access</small></div>
+							</div>
+						</section>
 						<nav className='breadcrumbs'>
 							<button onClick={() => setPrefix('')}>{bucket}</button>
 							{crumbs.map((crumb, index) => (
@@ -527,12 +569,6 @@ export default function App() {
 							))}
 						</nav>
 						<div className='toolbar'>
-							<button
-								className='primary'
-								onClick={() => inputRef.current?.click()}
-							>
-								↑ Upload
-							</button>
 							<input
 								ref={inputRef}
 								hidden
@@ -542,10 +578,7 @@ export default function App() {
 									void doUpload(Array.from(event.target.files ?? []))
 								}
 							/>
-							<button onClick={createFolder}>＋ New Folder</button>
-							<button onClick={() => void loadObjects()} disabled={loading}>
-								↻ Refresh
-							</button>
+							<button onClick={() => void loadObjects()} disabled={loading} title='Refresh objects'>↻</button>
 							<input
 								className='search'
 								placeholder='Filter current folder…'
@@ -565,7 +598,7 @@ export default function App() {
 									<tr>
 										<th>
 											<button onClick={() => changeSort('name')}>
-												Name {sort === 'name' && (ascending ? '↑' : '↓')}
+												Key {sort === 'name' && (ascending ? '↑' : '↓')}
 											</button>
 										</th>
 										<th>Content type</th>
@@ -666,6 +699,12 @@ export default function App() {
 								Load more
 							</button>
 						)}
+						<div className='utility-panels'>
+							<button className='upload-zone' onClick={() => inputRef.current?.click()}>
+								<span>↥</span><b>Drop files here to upload</b><small>up to 100 MB per object · 20 files per request</small>
+							</button>
+							<section className='cli-panel'><h3>Equivalent CLI</h3><pre>{`aws --endpoint-url ${health.endpoint} \\\n  s3 ls s3://${bucket}/${prefix}\n\naws --endpoint-url ${health.endpoint} \\\n  s3 cp ./file.txt s3://${bucket}/${prefix}`}</pre></section>
+						</div>
 						{dragging && (
 							<div className='drop-overlay'>
 								Drop files to upload into <strong>{prefix || '/'}</strong>

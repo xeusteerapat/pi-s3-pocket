@@ -32,22 +32,37 @@ export class ApiError extends Error {
 	}
 }
 
+function emitRequestLog(method: string, url: string, status: number) {
+	window.dispatchEvent(
+		new CustomEvent('s3-api-request', {
+			detail: { method, url, status, time: new Date().toISOString() },
+		}),
+	);
+}
+
 export async function request<T>(
 	url: string,
 	options?: RequestInit,
 ): Promise<T> {
-	const response = await fetch(url, options);
-	if (!response.ok) {
-		const payload = await response.json().catch(() => null);
-		throw new ApiError(
-			payload?.error?.message ?? response.statusText,
-			payload?.error?.code,
-			response.status,
-			payload?.error,
-		);
+	const method = options?.method ?? 'GET';
+	try {
+		const response = await fetch(url, options);
+		emitRequestLog(method, url, response.status);
+		if (!response.ok) {
+			const payload = await response.json().catch(() => null);
+			throw new ApiError(
+				payload?.error?.message ?? response.statusText,
+				payload?.error?.code,
+				response.status,
+				payload?.error,
+			);
+		}
+		if (response.status === 204) return undefined as T;
+		return response.json();
+	} catch (error) {
+		if (!(error instanceof ApiError)) emitRequestLog(method, url, 0);
+		throw error;
 	}
-	if (response.status === 204) return undefined as T;
-	return response.json();
 }
 
 export const bucketPath = (bucket: string) =>
