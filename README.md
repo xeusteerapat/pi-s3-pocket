@@ -34,6 +34,8 @@ Open <http://localhost:5173>. The API runs at <http://localhost:3001> and Vite p
 
 All S3 settings are environment variables. Defaults target `http://localhost:4566` with `test` credentials and never target AWS unless explicitly configured.
 
+The backend writes structured Pino JSON logs for startup, HTTP requests, responses, and errors. Set `LOG_LEVEL` in `.env` (for example `debug`, `info`, or `warn`) to control verbosity. Request bodies and file contents are not logged, and sensitive headers are redacted.
+
 ## Add test data
 
 Create a bucket in the UI, or use an AWS-compatible CLI:
