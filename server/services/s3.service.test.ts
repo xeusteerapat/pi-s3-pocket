@@ -106,6 +106,7 @@ describe('S3Service', () => {
 			Prefix: 'a/b/',
 			Delimiter: '/',
 			ContinuationToken: 'token',
+			MaxKeys: 20,
 		});
 	});
 

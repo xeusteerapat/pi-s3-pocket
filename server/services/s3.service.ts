@@ -82,13 +82,19 @@ export class S3Service {
 		await this.client.send(new DeleteBucketCommand({ Bucket: name }));
 	}
 
-	async listObjects(bucket: string, prefix = '', continuationToken?: string) {
+	async listObjects(
+		bucket: string,
+		prefix = '',
+		continuationToken?: string,
+		maxKeys = 20,
+	) {
 		const result = await this.client.send(
 			new ListObjectsV2Command({
 				Bucket: bucket,
 				Prefix: prefix,
 				Delimiter: '/',
 				ContinuationToken: continuationToken,
+				MaxKeys: maxKeys,
 			}),
 		);
 

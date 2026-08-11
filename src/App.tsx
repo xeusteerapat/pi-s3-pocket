@@ -149,6 +149,8 @@ export default function App() {
 		isTruncated: false,
 	});
 	const [loading, setLoading] = useState(false);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [pageTokens, setPageTokens] = useState<string[]>(['']);
 	const [error, setError] = useState('');
 	const [search, setSearch] = useState('');
 	const [globalSearch, setGlobalSearch] = useState('');
@@ -234,22 +236,22 @@ export default function App() {
 	}, [health.endpoint]);
 
 	const loadObjects = useCallback(
-		async (append = false, token?: string) => {
+		async (token?: string, targetPage = 1) => {
 			if (!bucket) return;
 			setLoading(true);
 			try {
 				const result = await request<ObjectPage>(
 					`${bucketPath(bucket)}/objects?${query({ prefix, continuationToken: token })}`,
 				);
-				setPage((old) =>
-					append
-						? {
-								...result,
-								folders: [...old.folders, ...result.folders],
-								objects: [...old.objects, ...result.objects],
-							}
-						: result,
-				);
+				setPage(result);
+				setCurrentPage(targetPage);
+				setPageTokens((history) => {
+					const updated = targetPage === 1 ? [''] : [...history];
+					if (result.nextContinuationToken)
+						updated[targetPage] = result.nextContinuationToken;
+					else updated.splice(targetPage);
+					return updated;
+				});
 				setError('');
 			} catch (err) {
 				setError(errorText(err));
@@ -268,7 +270,9 @@ export default function App() {
 	}, [checkHealth, loadBuckets]);
 	useEffect(() => {
 		setPage({ folders: [], objects: [], isTruncated: false });
-		void loadObjects();
+		setCurrentPage(1);
+		setPageTokens(['']);
+		void loadObjects(undefined, 1);
 	}, [loadObjects]);
 
 	const entries = useMemo<Entry[]>(() => {
@@ -766,7 +770,12 @@ export default function App() {
 								}
 							/>
 							<button
-								onClick={() => void loadObjects()}
+								onClick={() =>
+									void loadObjects(
+										pageTokens[currentPage - 1] || undefined,
+										currentPage,
+									)
+								}
 								disabled={loading}
 								title='Refresh objects'
 							>
@@ -881,17 +890,36 @@ export default function App() {
 							</table>
 							{loading && <div className='loading'>Loading…</div>}
 						</div>
-						{page.isTruncated && (
-							<button
-								className='load-more'
-								disabled={loading}
-								onClick={() =>
-									void loadObjects(true, page.nextContinuationToken)
-								}
-							>
-								Load more
-							</button>
-						)}
+						<div className='pagination'>
+							<span>20 items per page</span>
+							<div>
+								<button
+									disabled={loading || currentPage === 1}
+									onClick={() =>
+										void loadObjects(
+											pageTokens[currentPage - 2] || undefined,
+											currentPage - 1,
+										)
+									}
+								>
+									← Previous
+								</button>
+								<b>Page {currentPage}</b>
+								<button
+									disabled={
+										loading || !page.isTruncated || !page.nextContinuationToken
+									}
+									onClick={() =>
+										void loadObjects(
+											page.nextContinuationToken,
+											currentPage + 1,
+										)
+									}
+								>
+									Next →
+								</button>
+							</div>
+						</div>
 						<div className='utility-panels'>
 							<button
 								className='upload-zone'

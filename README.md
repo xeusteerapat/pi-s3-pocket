@@ -6,7 +6,7 @@ A lightweight local S3 file browser for developers using [Floci](https://github.
 
 - Floci connection status and useful offline errors
 - List, create, and safely delete buckets
-- Prefix/delimiter folder navigation with breadcrumbs and paginated results
+- Prefix/delimiter folder navigation with breadcrumbs and 20-item Previous/Next pagination
 - Multi-file picker and drag-and-drop uploads with progress and overwrite confirmation
 - Streaming downloads and safe previews for text, JSON, images, SVG, and PDF
 - Create logical folders, delete, copy, and move/rename objects

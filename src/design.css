@@ -97,6 +97,10 @@ tbody tr:hover { background: #1a1e25; }
 tr:hover .actions { opacity: 1; }
 .actions button, .actions a { font-size: 9px; }
 .empty-table { padding: 45px; }
+.pagination { display: flex; align-items: center; justify-content: space-between; margin: -4px 0 15px; color: var(--console-muted); font-size: 9px; }
+.pagination > div { display: flex; align-items: center; gap: 9px; }
+.pagination button { min-width: 76px; padding: 5px 8px; color: #b8bec7; }
+.pagination b { min-width: 55px; color: #d5dae1; text-align: center; font-weight: 500; }
 .utility-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
 .upload-zone { min-height: 145px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 7px; border: 1px solid var(--console-border); background-color: #12161c; background-image: linear-gradient(#ffffff05 1px, transparent 1px), linear-gradient(90deg, #ffffff05 1px, transparent 1px); background-size: 25px 25px; }
 .upload-zone span { color: var(--console-amber); font-size: 26px; }
