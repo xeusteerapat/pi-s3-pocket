@@ -60,14 +60,27 @@ export function createApiRouter(service: S3Service, endpoint: string) {
 			const message =
 				detail ||
 				`Unable to connect to S3 at ${endpoint}. Make sure Floci is running.`;
-			res
-				.status(503)
-				.json({
-					connected: false,
-					endpoint,
-					error: { code: 'S3Offline', message },
-				});
+			res.status(503).json({
+				connected: false,
+				endpoint,
+				error: { code: 'S3Offline', message },
+			});
 		}
+	});
+
+	router.get('/search', async (req, res) => {
+		const searchQuery =
+			typeof req.query.q === 'string' ? req.query.q.trim() : '';
+		if (!searchQuery || searchQuery.length > 200) {
+			throw Object.assign(
+				new Error('Search query must be between 1 and 200 characters'),
+				{
+					status: 400,
+					code: 'InvalidSearchQuery',
+				},
+			);
+		}
+		res.json(await service.search(searchQuery));
 	});
 
 	router.get('/buckets', async (_req, res) =>

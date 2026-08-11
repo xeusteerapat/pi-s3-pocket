@@ -20,6 +20,17 @@ export interface ObjectPage {
 	nextContinuationToken?: string;
 	isTruncated: boolean;
 }
+export interface SearchResult {
+	buckets: Bucket[];
+	objects: Array<{
+		bucket: string;
+		key: string;
+		size: number;
+		lastModified?: string;
+		etag?: string;
+	}>;
+	truncated: boolean;
+}
 
 export class ApiError extends Error {
 	constructor(

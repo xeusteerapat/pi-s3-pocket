@@ -10,7 +10,8 @@ A lightweight local S3 file browser for developers using [Floci](https://github.
 - Multi-file picker and drag-and-drop uploads with progress and overwrite confirmation
 - Streaming downloads and safe previews for text, JSON, images, SVG, and PDF
 - Create logical folders, delete, copy, and move/rename objects
-- Search the current folder and sort by name, size, or modified date
+- Global case-insensitive search across bucket names and paginated object keys
+- Filter the current folder and sort by name, size, or modified date
 - Object key, size, content type, modified date, and ETag metadata
 
 ## Requirements

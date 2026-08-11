@@ -26,6 +26,54 @@ export class S3Service {
 		}));
 	}
 
+	async search(query: string, maxObjectResults = 100) {
+		const normalized = query.toLowerCase();
+		const buckets = await this.listBuckets();
+		const matchingBuckets = buckets.filter((bucket) =>
+			bucket.name?.toLowerCase().includes(normalized),
+		);
+		const objects: Array<{
+			bucket: string;
+			key: string;
+			size: number;
+			lastModified?: string;
+			etag?: string;
+		}> = [];
+		let truncated = false;
+
+		for (const bucket of buckets) {
+			if (!bucket.name) continue;
+			let continuationToken: string | undefined;
+			do {
+				const result = await this.client.send(
+					new ListObjectsV2Command({
+						Bucket: bucket.name,
+						ContinuationToken: continuationToken,
+					}),
+				);
+				for (const object of result.Contents ?? []) {
+					if (object.Key?.toLowerCase().includes(normalized)) {
+						objects.push({
+							bucket: bucket.name,
+							key: object.Key,
+							size: object.Size ?? 0,
+							lastModified: object.LastModified?.toISOString(),
+							etag: object.ETag,
+						});
+						if (objects.length >= maxObjectResults) {
+							truncated =
+								Boolean(result.IsTruncated) || bucket !== buckets.at(-1);
+							return { buckets: matchingBuckets, objects, truncated };
+						}
+					}
+				}
+				continuationToken = result.NextContinuationToken;
+			} while (continuationToken);
+		}
+
+		return { buckets: matchingBuckets, objects, truncated };
+	}
+
 	async createBucket(name: string) {
 		await this.client.send(new CreateBucketCommand({ Bucket: name }));
 	}

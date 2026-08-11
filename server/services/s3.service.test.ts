@@ -14,15 +14,50 @@ const serviceWith = (send: ReturnType<typeof vi.fn>) =>
 
 describe('S3Service', () => {
 	it('lists buckets', async () => {
-		const send = vi
-			.fn()
-			.mockResolvedValue({
-				Buckets: [{ Name: 'demo', CreationDate: new Date('2026-01-01') }],
-			});
+		const send = vi.fn().mockResolvedValue({
+			Buckets: [{ Name: 'demo', CreationDate: new Date('2026-01-01') }],
+		});
 		await expect(serviceWith(send).listBuckets()).resolves.toEqual([
 			{ name: 'demo', creationDate: '2026-01-01T00:00:00.000Z' },
 		]);
 		expect(send.mock.calls[0][0]).toBeInstanceOf(ListBucketsCommand);
+	});
+
+	it('searches bucket names and paginated object keys', async () => {
+		const send = vi.fn(async (command) => {
+			if (command instanceof ListBucketsCommand) {
+				return { Buckets: [{ Name: 'cool-bucket' }, { Name: 'documents' }] };
+			}
+			if (command instanceof ListObjectsV2Command) {
+				if (command.input.Bucket === 'cool-bucket') return { Contents: [] };
+				if (!command.input.ContinuationToken) {
+					return {
+						Contents: [{ Key: 'ordinary.txt' }],
+						NextContinuationToken: 'page-2',
+						IsTruncated: true,
+					};
+				}
+				return {
+					Contents: [{ Key: 'archive/cool-object.json', Size: 12 }],
+					IsTruncated: false,
+				};
+			}
+			return {};
+		});
+
+		await expect(serviceWith(send).search('COOL')).resolves.toEqual({
+			buckets: [{ name: 'cool-bucket', creationDate: undefined }],
+			objects: [
+				{
+					bucket: 'documents',
+					key: 'archive/cool-object.json',
+					size: 12,
+					lastModified: undefined,
+					etag: undefined,
+				},
+			],
+			truncated: false,
+		});
 	});
 
 	it('lists objects and common prefixes', async () => {

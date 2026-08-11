@@ -15,11 +15,12 @@ import {
 	type Folder,
 	type ObjectPage,
 	type S3Object,
+	type SearchResult,
 } from './api';
 
 type SortKey = 'name' | 'size' | 'lastModified';
 type Entry = (Folder & { kind: 'folder' }) | (S3Object & { kind: 'object' });
-type RequestLog = { method: string; url: string; status: number; time: string }; 
+type RequestLog = { method: string; url: string; status: number; time: string };
 
 const formatSize = (bytes: number) => {
 	if (!bytes) return '0 B';
@@ -58,7 +59,16 @@ function uploadFiles(
 			event.lengthComputable &&
 			onProgress(Math.round((event.loaded / event.total) * 100));
 		xhr.onload = () => {
-			window.dispatchEvent(new CustomEvent('s3-api-request', { detail: { method: 'PUT', url: `${bucketPath(bucket)}/objects`, status: xhr.status, time: new Date().toISOString() } }));
+			window.dispatchEvent(
+				new CustomEvent('s3-api-request', {
+					detail: {
+						method: 'PUT',
+						url: `${bucketPath(bucket)}/objects`,
+						status: xhr.status,
+						time: new Date().toISOString(),
+					},
+				}),
+			);
 			if (xhr.status >= 200 && xhr.status < 300) resolve();
 			else {
 				try {
@@ -77,7 +87,16 @@ function uploadFiles(
 			}
 		};
 		xhr.onerror = () => {
-			window.dispatchEvent(new CustomEvent('s3-api-request', { detail: { method: 'PUT', url: `${bucketPath(bucket)}/objects`, status: 0, time: new Date().toISOString() } }));
+			window.dispatchEvent(
+				new CustomEvent('s3-api-request', {
+					detail: {
+						method: 'PUT',
+						url: `${bucketPath(bucket)}/objects`,
+						status: 0,
+						time: new Date().toISOString(),
+					},
+				}),
+			);
 			reject(new ApiError('Unable to reach the upload API', 'NetworkError', 0));
 		};
 		xhr.send(form);
@@ -132,6 +151,10 @@ export default function App() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState('');
 	const [search, setSearch] = useState('');
+	const [globalSearch, setGlobalSearch] = useState('');
+	const [searchResults, setSearchResults] = useState<SearchResult | null>(null);
+	const [searching, setSearching] = useState(false);
+	const [searchOpen, setSearchOpen] = useState(false);
 	const [sort, setSort] = useState<SortKey>('name');
 	const [ascending, setAscending] = useState(true);
 	const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -153,6 +176,33 @@ export default function App() {
 		window.addEventListener('s3-api-request', capture);
 		return () => window.removeEventListener('s3-api-request', capture);
 	}, []);
+
+	useEffect(() => {
+		const term = globalSearch.trim();
+		if (!term) {
+			setSearchResults(null);
+			setSearching(false);
+			return;
+		}
+		let active = true;
+		setSearching(true);
+		const timer = window.setTimeout(async () => {
+			try {
+				const result = await request<SearchResult>(
+					`/api/search?${query({ q: term })}`,
+				);
+				if (active) setSearchResults(result);
+			} catch (err) {
+				if (active) setError(errorText(err));
+			} finally {
+				if (active) setSearching(false);
+			}
+		}, 300);
+		return () => {
+			active = false;
+			window.clearTimeout(timer);
+		};
+	}, [globalSearch]);
 
 	const checkHealth = useCallback(async () => {
 		try {
@@ -248,6 +298,19 @@ export default function App() {
 		setBucket(name);
 		setPrefix('');
 		setSearch('');
+	};
+	const chooseSearchBucket = (name: string) => {
+		chooseBucket(name);
+		setGlobalSearch('');
+		setSearchOpen(false);
+	};
+	const chooseSearchObject = (result: SearchResult['objects'][number]) => {
+		setBucket(result.bucket);
+		const slash = result.key.lastIndexOf('/');
+		setPrefix(slash >= 0 ? result.key.slice(0, slash + 1) : '');
+		setSearch(slash >= 0 ? result.key.slice(slash + 1) : result.key);
+		setGlobalSearch('');
+		setSearchOpen(false);
 	};
 	const showError = (err: unknown) => setError(errorText(err));
 
@@ -442,26 +505,102 @@ export default function App() {
 	}
 
 	const crumbs = prefix.split('/').filter(Boolean);
-	const loadedSize = page.objects.reduce((total, object) => total + object.size, 0);
+	const loadedSize = page.objects.reduce(
+		(total, object) => total + object.size,
+		0,
+	);
 	const currentBucket = buckets.find((item) => item.name === bucket);
 	return (
 		<div className='app'>
 			<header className='topbar'>
 				<div className='brand'>
 					<span className='brand-mark'>♧</span>
-					<span><h1>s3-local-console</h1><small>local development file manager</small></span>
+					<span>
+						<h1>s3-local-console</h1>
+						<small>local development file manager</small>
+					</span>
 				</div>
 				<div className='header-controls'>
-					<div className='endpoint-pill'>⌁ <b>Floci</b><span>{health.endpoint}</span></div>
-					<div className={`status ${health.connected ? 'online' : 'offline'}`}><span className='dot' />{health.connected ? 'connected' : 'offline'}</div>
-					<button className='credentials' onClick={() => window.alert('S3 credentials are configured securely on the server through environment variables.')}>⌘ Local credentials</button>
+					<div className='global-search'>
+						<span>⌕</span>
+						<input
+							value={globalSearch}
+							onChange={(event) => {
+								setGlobalSearch(event.target.value);
+								setSearchOpen(true);
+							}}
+							onFocus={() => setSearchOpen(true)}
+							onBlur={() => window.setTimeout(() => setSearchOpen(false), 150)}
+							placeholder='Search all buckets and objects…'
+						/>
+						{searching && <i>…</i>}
+						{searchOpen && globalSearch.trim() && (
+							<div className='search-results'>
+								{searchResults?.buckets.map((result) => (
+									<button
+										key={`bucket-${result.name}`}
+										onClick={() => chooseSearchBucket(result.name)}
+									>
+										<span className='result-icon'>▱</span>
+										<span>
+											<b>{result.name}</b>
+											<small>Bucket</small>
+										</span>
+									</button>
+								))}
+								{searchResults?.objects.map((result) => (
+									<button
+										key={`${result.bucket}-${result.key}`}
+										onClick={() => chooseSearchObject(result)}
+									>
+										<span className='result-icon'>⌑</span>
+										<span>
+											<b>{result.key}</b>
+											<small>
+												s3://{result.bucket} · {formatSize(result.size)}
+											</small>
+										</span>
+									</button>
+								))}
+								{!searching &&
+									searchResults &&
+									!searchResults.buckets.length &&
+									!searchResults.objects.length && (
+										<p>No matches for “{globalSearch}”</p>
+									)}
+								{searchResults?.truncated && (
+									<footer>Showing the first 100 object matches</footer>
+								)}
+							</div>
+						)}
+					</div>
+					<div className='endpoint-pill'>
+						⌁ <b>Floci</b>
+						<span>{health.endpoint}</span>
+					</div>
+					<div className={`status ${health.connected ? 'online' : 'offline'}`}>
+						<span className='dot' />
+						{health.connected ? 'connected' : 'offline'}
+					</div>
+					<button
+						className='credentials'
+						onClick={() =>
+							window.alert(
+								'S3 credentials are configured securely on the server through environment variables.',
+							)
+						}
+					>
+						⌘ Local credentials
+					</button>
 				</div>
 			</header>
 
 			<aside className='sidebar'>
 				<div className='sidebar-title'>
 					<strong>Buckets</strong>
-					<button onClick={() => void loadBuckets()} title='Refresh buckets'>↻</button>
+					<button onClick={() => void loadBuckets()} title='Refresh buckets'>
+						↻
+					</button>
 				</div>
 				<div className='bucket-list'>
 					{buckets.map((item) => (
@@ -492,17 +631,35 @@ export default function App() {
 						</div>
 					))}
 					{!buckets.length && <p className='empty-side'>No buckets</p>}
-					<button className='create-bucket' onClick={createBucket}>＋ Create bucket</button>
+					<button className='create-bucket' onClick={createBucket}>
+						＋ Create bucket
+					</button>
 				</div>
 				<section className='request-log'>
 					<h3>Request log</h3>
-					{requestLogs.length ? requestLogs.map((log, index) => (
-						<div className='log-entry' key={`${log.time}-${index}`}>
-							<span>{new Date(log.time).toLocaleTimeString([], { hour12: false })}</span>{' '}
-							<b className={log.status >= 400 || !log.status ? 'log-error' : ''}>{log.method} {log.status || 'ERR'}</b>
-							<small>{log.url.replace('/api/buckets/', 's3://').replace('/api/', '/')}</small>
-						</div>
-					)) : <p>No requests yet</p>}
+					{requestLogs.length ? (
+						requestLogs.map((log, index) => (
+							<div className='log-entry' key={`${log.time}-${index}`}>
+								<span>
+									{new Date(log.time).toLocaleTimeString([], { hour12: false })}
+								</span>{' '}
+								<b
+									className={
+										log.status >= 400 || !log.status ? 'log-error' : ''
+									}
+								>
+									{log.method} {log.status || 'ERR'}
+								</b>
+								<small>
+									{log.url
+										.replace('/api/buckets/', 's3://')
+										.replace('/api/', '/')}
+								</small>
+							</div>
+						))
+					) : (
+						<p>No requests yet</p>
+					)}
 				</section>
 			</aside>
 
@@ -539,17 +696,47 @@ export default function App() {
 					<>
 						<section className='bucket-overview'>
 							<div className='bucket-heading'>
-								<div><h2>s3://{bucket}</h2><p>region us-east-1 {currentBucket?.creationDate && <>· created {formatDate(currentBucket.creationDate)}</>}</p></div>
+								<div>
+									<h2>s3://{bucket}</h2>
+									<p>
+										region us-east-1{' '}
+										{currentBucket?.creationDate && (
+											<>· created {formatDate(currentBucket.creationDate)}</>
+										)}
+									</p>
+								</div>
 								<div className='overview-actions'>
-									<button className='primary' onClick={() => inputRef.current?.click()}>↥ Upload</button>
+									<button
+										className='primary'
+										onClick={() => inputRef.current?.click()}
+									>
+										↥ Upload
+									</button>
 									<button onClick={createFolder}>▱ New folder</button>
-									<button className='delete-overview' onClick={() => void deleteBucket(bucket)}>Delete bucket</button>
+									<button
+										className='delete-overview'
+										onClick={() => void deleteBucket(bucket)}
+									>
+										Delete bucket
+									</button>
 								</div>
 							</div>
 							<div className='bucket-stats'>
-								<div><span>▧</span><b>{page.objects.length}</b><small>Loaded objects</small></div>
-								<div><span>▤</span><b>{formatSize(loadedSize)}</b><small>Loaded size</small></div>
-								<div><span>⌑</span><b>local</b><small>Access</small></div>
+								<div>
+									<span>▧</span>
+									<b>{page.objects.length}</b>
+									<small>Loaded objects</small>
+								</div>
+								<div>
+									<span>▤</span>
+									<b>{formatSize(loadedSize)}</b>
+									<small>Loaded size</small>
+								</div>
+								<div>
+									<span>⌑</span>
+									<b>local</b>
+									<small>Access</small>
+								</div>
 							</div>
 						</section>
 						<nav className='breadcrumbs'>
@@ -578,7 +765,13 @@ export default function App() {
 									void doUpload(Array.from(event.target.files ?? []))
 								}
 							/>
-							<button onClick={() => void loadObjects()} disabled={loading} title='Refresh objects'>↻</button>
+							<button
+								onClick={() => void loadObjects()}
+								disabled={loading}
+								title='Refresh objects'
+							>
+								↻
+							</button>
 							<input
 								className='search'
 								placeholder='Filter current folder…'
@@ -700,10 +893,18 @@ export default function App() {
 							</button>
 						)}
 						<div className='utility-panels'>
-							<button className='upload-zone' onClick={() => inputRef.current?.click()}>
-								<span>↥</span><b>Drop files here to upload</b><small>up to 100 MB per object · 20 files per request</small>
+							<button
+								className='upload-zone'
+								onClick={() => inputRef.current?.click()}
+							>
+								<span>↥</span>
+								<b>Drop files here to upload</b>
+								<small>up to 100 MB per object · 20 files per request</small>
 							</button>
-							<section className='cli-panel'><h3>Equivalent CLI</h3><pre>{`aws --endpoint-url ${health.endpoint} \\\n  s3 ls s3://${bucket}/${prefix}\n\naws --endpoint-url ${health.endpoint} \\\n  s3 cp ./file.txt s3://${bucket}/${prefix}`}</pre></section>
+							<section className='cli-panel'>
+								<h3>Equivalent CLI</h3>
+								<pre>{`aws --endpoint-url ${health.endpoint} \\\n  s3 ls s3://${bucket}/${prefix}\n\naws --endpoint-url ${health.endpoint} \\\n  s3 cp ./file.txt s3://${bucket}/${prefix}`}</pre>
+							</section>
 						</div>
 						{dragging && (
 							<div className='drop-overlay'>
